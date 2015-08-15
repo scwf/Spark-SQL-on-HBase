@@ -38,14 +38,17 @@ class HBaseBasicOperationSuite extends TestBaseWithSplitData {
 
   test("Insert Into table in stringFormat") {
     sql( """CREATE TABLE tb0 (column2 INTEGER, column1 INTEGER, column4 FLOAT,
-          column3 SHORT, PRIMARY KEY(column1, column2)) IN stringFormat
-          MAPPED BY (testNamespace.ht0, COLS=[column3=family1.qualifier1,
+          column3 SHORT, PRIMARY KEY(column1)) IN stringFormat
+          MAPPED BY (testNamespace.ht0, COLS=[column2=family0.qualifier0, column3=family1.qualifier1,
           column4=family2.qualifier2])"""
     )
 
     assert(sql( """SELECT * FROM tb0""").collect().length == 0)
     sql( """INSERT INTO TABLE tb0 SELECT col4,col4,col6,col3 FROM ta""")
     assert(sql( """SELECT * FROM tb0""").collect().length == 14)
+
+    sql( """SELECT * FROM tb0""").show
+    sql( """SELECT * FROM tb0 where column2 > 200""").show
 
     sql( """DROP TABLE tb0""")
   }

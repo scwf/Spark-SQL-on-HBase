@@ -16,7 +16,10 @@
 */
 package org.apache.spark.sql.hbase.util
 
-import org.apache.hadoop.hbase.filter.BinaryComparator
+import org.apache.hadoop.hbase.exceptions.DeserializationException
+import org.apache.hadoop.hbase.filter.{ByteArrayComparable, BinaryComparator}
+import org.apache.hadoop.hbase.protobuf.generated.ComparatorProtos
+import org.apache.hadoop.hbase.util.Bytes
 import org.apache.spark.sql.catalyst.expressions.{Literal, MutableRow, Row}
 import org.apache.spark.sql.execution.SparkSqlSerializer
 import org.apache.spark.sql.types._
@@ -151,17 +154,89 @@ object DataTypeUtils {
    * @param expression the input expression
    * @return the constructed binary comparator
    */
-  def getBinaryComparator(bu: ToBytesUtils, expression: Literal): BinaryComparator = {
-    expression.dataType match {
-      case BooleanType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Boolean]))
-      case ByteType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Byte]))
-      case DoubleType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Double]))
-      case FloatType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Float]))
-      case IntegerType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Int]))
-      case LongType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Long]))
-      case ShortType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Short]))
-      case StringType => new BinaryComparator(bu.toBytes(expression.value))
-      case _ => throw new Exception("Cannot convert the data type using BinaryComparator")
+  def getBinaryComparator(bu: ToBytesUtils, expression: Literal): ByteArrayComparable = {
+    bu match {
+      case bbu: BinaryBytesUtils =>
+        expression.dataType match {
+          case BooleanType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Boolean]))
+          case ByteType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Byte]))
+          case DoubleType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Double]))
+          case FloatType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Float]))
+          case IntegerType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Int]))
+          case LongType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Long]))
+          case ShortType => new BinaryComparator(bu.toBytes(expression.value.asInstanceOf[Short]))
+          case StringType => new BinaryComparator(bu.toBytes(expression.value))
+          case _ => throw new Exception("Cannot convert the data type using BinaryComparator")
+        }
+      case sbu: StringBytesUtils =>
+        lazy val v_binary: HBaseRawType = {
+          val bu = StringBytesUtils.create(expression.dataType)
+          expression.dataType match {
+            case BooleanType => bu.toBytes(expression.value.asInstanceOf[Boolean])
+            case ByteType => bu.toBytes(expression.value.asInstanceOf[Byte])
+            case DoubleType => bu.toBytes(expression.value.asInstanceOf[Double])
+            case FloatType => bu.toBytes(expression.value.asInstanceOf[Float])
+            case IntegerType => bu.toBytes(expression.value.asInstanceOf[Int])
+            case LongType => bu.toBytes(expression.value.asInstanceOf[Long])
+            case ShortType => bu.toBytes(expression.value.asInstanceOf[Short])
+            case StringType => bu.toBytes(expression.value)
+            case _ => throw new Exception("Cannot convert the data type using StringBinaryComparator")
+          }
+        }
+        new StringBinaryComparator(expression.value, expression.dataType, v_binary)
     }
   }
 }
+
+class StringBinaryComparator(v: Any, dataType: DataType, v_binary: HBaseRawType)
+  extends BinaryComparator(v_binary) {
+
+  override def compareTo(value: HBaseRawType, offset: Int, length: Int): Int = {
+    dataType match {
+      case BooleanType =>
+        Bytes.compareTo(v_binary, 0, v_binary.length, value, offset, length)
+      case ByteType =>
+        v.asInstanceOf[Byte] - StringBytesUtils.toByte(value, offset, length)
+      case DoubleType =>
+        (v.asInstanceOf[Double] - StringBytesUtils.toDouble(value, offset, length)).toInt
+      case FloatType =>
+        (v.asInstanceOf[Float] - StringBytesUtils.toFloat(value, offset, length)).toInt
+      case IntegerType =>
+        v.asInstanceOf[Int] - StringBytesUtils.toInt(value, offset, length)
+      case LongType =>
+        (v.asInstanceOf[Long] - StringBytesUtils.toLong(value, offset, length)).toInt
+      case ShortType =>
+        v.asInstanceOf[Short] - StringBytesUtils.toShort(value, offset, length)
+      case StringType =>
+        Bytes.compareTo(v_binary, 0, v_binary.length, value, offset, length)
+      case _ => throw new Exception("Cannot compare the data in this dataType")
+    }
+  }
+
+  /**
+   * @return The comparator serialized using pb
+   */
+  override def toByteArray: Array[Byte] = {
+    super.toByteArray
+  }
+
+//  /**
+//   * @param pbBytes A pb serialized { @link BinaryComparator} instance
+//   * @return An instance of { @link BinaryComparator} made from <code>bytes</code>
+//   * @see #toByteArray
+//   */
+//  def parseFrom(pbBytes: Array[Byte]): BinaryComparator = {
+//    SparkSqlSerializer.deserialize(pbBytes)
+//  }
+}
+
+//object StringBinaryComparator {
+//  /**
+//   * @param pbBytes A pb serialized { @link BinaryComparator} instance
+//   * @return An instance of { @link BinaryComparator} made from <code>bytes</code>
+//   * @see #toByteArray
+//   */
+//  def parseFrom(pbBytes: Array[Byte]): BinaryComparator = {
+//    SparkSqlSerializer.deserialize(pbBytes)
+//  }
+//}
